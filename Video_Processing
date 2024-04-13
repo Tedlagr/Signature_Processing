@@ -1,0 +1,158 @@
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Function to filter out values that deviate significantly from their neighbors
+def filter_values(values, max_deviation, window_size, frame_counter):
+    filtered_values = [values[0]]
+    for i in range(1, len(values) - 1):
+        if i + window_size < len(values) - 1:
+            diffs = [abs(values[i] - values[j]) for j in range(i - window_size, i + window_size + 1)]
+            if max(diffs) <= max_deviation:
+                filtered_values.append(values[i])
+            else:
+                # Replace the value with the median of the neighboring values
+                neighbors = [values[j] for j in range(i - window_size, i + window_size + 1)]
+                valid_neighbors = [val for val in neighbors if not np.isnan(val)]
+                if valid_neighbors:
+                    median_value = np.median(valid_neighbors)
+                else:
+                    median_value = values[i]  # Keep the value unchanged if no valid neighbors
+                filtered_values.append(median_value)
+        else:
+            # If not enough points ahead, use the last point
+            filtered_values.append(values[-1])
+    
+    # Ensure the length of the filtered values matches the frame counter list
+    if len(filtered_values) < len(frame_counter):
+        # Add values to match the length
+        diff = len(frame_counter) - len(filtered_values)
+        filtered_values.extend([filtered_values[-1]] * diff)
+    elif len(filtered_values) > len(frame_counter):
+        # Remove values to match the length
+        diff = len(filtered_values) - len(frame_counter)
+        filtered_values = filtered_values[:-diff]
+    
+    return filtered_values
+
+# Capture video
+cap = cv2.VideoCapture(r'C:\Users\tedla\Downloads\Signature_Video.mp4')
+
+# Lists to store coordinates and frame counter
+x_coordinates_all = []
+y_coordinates_all = []
+frame_counter = []
+
+# Read first frame
+ret, prev_frame = cap.read()
+prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
+frame_count = 0
+
+# Maximum deviation allowed for x and y coordinates
+max_deviation = 20
+# Window size for median filter
+window_size = 3
+
+while True:
+    # Read a new frame
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    # Convert frame to grayscale
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    # Compute absolute difference between current and previous frame
+    diff = cv2.absdiff(gray, prev_gray)
+
+    # Threshold the difference image
+    _, thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
+
+    # Find contours
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Initialize variables to store coordinates for this frame
+    cx_frame = None
+    cy_frame = None
+
+    # Iterate over contours and find center coordinates
+    for contour in contours:
+        # Get bounding box
+        x, y, w, h = cv2.boundingRect(contour)
+        # Calculate center coordinates
+        cx_frame = round(x + w / 2)
+        cy_frame = round(y + h / 2)
+
+    # Append center coordinates to lists
+    if cx_frame is not None and cy_frame is not None:
+        x_coordinates_all.append(cx_frame)
+        y_coordinates_all.append(cy_frame)
+        frame_counter.append(frame_count)
+
+    # Show frame with changed pixels shaded red
+    cv2.imshow('Frame', frame)
+    if cv2.waitKey(25) & 0xFF == ord('q'):
+        break
+
+    # Update previous frame and gray image
+    prev_gray = gray.copy()
+    frame_count += 1
+
+# Release video capture
+cap.release()
+cv2.destroyAllWindows()
+
+# Filter x and y coordinate values
+x_coordinates_filtered = filter_values(x_coordinates_all, max_deviation, window_size, frame_counter)
+y_coordinates_filtered = filter_values(y_coordinates_all, max_deviation, window_size, frame_counter)
+
+# Convert lists to numpy arrays
+x_points = np.array(frame_counter)
+y_points_x = np.array(x_coordinates_filtered)
+y_points_y = np.array(y_coordinates_filtered)
+
+# Print frame counter and x coordinates filtered
+print("Frame Counter:", x_points)
+print("X Coordinates Filtered:", y_points_x)
+print("Y Coordinates Filtered:", y_points_y)
+
+def print_linear_interpolation_equation(x_points, y_points):
+    # Construct the equation as a string
+    equations = []
+    for i in range(len(x_points) - 1):
+        slope = (y_points[i + 1] - y_points[i]) / (x_points[i + 1] - x_points[i])
+        part = f"({y_points[i]} + {slope:.2f} * (x - {x_points[i]})) * H(x - {x_points[i]}) * (1 - H(x - {x_points[i + 1]}))"
+        equations.append(part)
+    
+    # Join all parts with a summation
+    full_equation = "y(x) = " + " + ".join(equations)
+    return full_equation
+
+# Generate the equation for x and y coordinates separately
+equation_x = print_linear_interpolation_equation(x_points, y_points_x)
+equation_y = print_linear_interpolation_equation(x_points, y_points_y)
+
+# Print equations
+print("Equation for X Coordinates:")
+print(equation_x)
+print("\nEquation for Y Coordinates:")
+print(equation_y)
+
+# Plot x and y coordinates against frame counter
+plt.figure(figsize=(10, 5))
+plt.subplot(1, 2, 1)
+plt.plot(x_points, y_points_x, label='X Coordinates', color='blue')
+plt.xlabel('Frame Counter')
+plt.ylabel('X Coordinates')
+plt.title('X Coordinates vs Frame Counter')
+plt.legend()
+
+plt.subplot(1, 2, 2)
+plt.plot(x_points, y_points_y, label='Y Coordinates', color='red')
+plt.xlabel('Frame Counter')
+plt.ylabel('Y Coordinates')
+plt.title('Y Coordinates vs Frame Counter')
+plt.legend()
+
+plt.tight_layout()
+plt.show()
